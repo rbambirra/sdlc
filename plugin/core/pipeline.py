@@ -52,6 +52,11 @@ DOD_GATES = [
     "deps_scan", "secret_scan", "sast", "e2e",
 ]
 
+# Dev loop: implement -> review -> gate -> judge, retry on NO-GO up to this many
+# rounds, feeding the findings back to the implementer each round. If the judge
+# still fails after the last round, escalate to a human instead of dead-ending.
+MAX_REVIEW_ROUNDS = 5
+
 
 class Pipeline:
     def __init__(self, harness: Harness, board: Board, vcs: Vcs,
@@ -160,31 +165,68 @@ class Pipeline:
             return self._finish(res, state)
         state.advance(Phase.DECOMPOSE); self.store.save(state)
 
-        # --- decompose + dev loop (per task) ---
+        # --- decompose + dev loop (per task), bounded retry with feedback ---
         # MVP: single task; production splits into branch+worktree per task.
-        impl = self._dispatch(res, "implementer", "Implement the plan (TDD). You do NOT own the held-out oracle.", {"plan": plan})
-        if res.blocked:
-            return self._finish(res, state)
-        spec_rev = self._dispatch(res, "spec_reviewer", "Review code vs spec compliance.", {"spec": spec, "impl": impl})
-        qual_rev = self._dispatch(res, "quality_reviewer", "Review code quality.", {"impl": impl})
-        qa_rev = self._dispatch(res, "qa", "Verify coverage vs AC (each AC has a test that proves it).", {"item": item, "impl": impl})
-        state.advance(Phase.DOD_GATE); self.store.save(state)
+        # Loop: implement -> review -> DoD gate -> holistic judge. On NO-GO,
+        # feed the findings back and retry, up to MAX_REVIEW_ROUNDS. If the
+        # judge still fails after the last round, escalate to a human (B).
+        impl = ""
+        feedback: list[str] = []
+        passed = False
+        for rnd in range(1, MAX_REVIEW_ROUNDS + 1):
+            self._log(res, f"[dev-loop] round {rnd}/{MAX_REVIEW_ROUNDS}")
+            ctx = {"plan": plan}
+            if feedback:
+                # Prior round's findings become explicit fix instructions.
+                ctx["previous_findings"] = "\n".join(feedback)
+            impl = self._dispatch(
+                res, "implementer",
+                "Implement the plan (TDD). You do NOT own the held-out oracle."
+                + (" Address the previous_findings before anything else." if feedback else ""),
+                ctx)
+            if res.blocked:
+                return self._finish(res, state)
 
-        # --- orthogonal DoD gate (held-out runs in the gate, not the implementer) ---
-        gate_ok, gate_findings = self._dod_gate(res)
-        if not gate_ok:
-            res.blocked = True
-            res.block_reason = f"DoD gate failed: {gate_findings}"
-            return self._finish(res, state)
+            self._dispatch(res, "spec_reviewer", "Review code vs spec compliance.", {"spec": spec, "impl": impl})
+            self._dispatch(res, "quality_reviewer", "Review code quality.", {"impl": impl})
+            self._dispatch(res, "qa", "Verify coverage vs AC (each AC has a test that proves it).", {"item": item, "impl": impl})
+
+            # --- orthogonal DoD gate (held-out runs in the gate, not the implementer) ---
+            gate_ok, gate_findings = self._dod_gate(res)
+            # --- holistic review (independent judge) ---
+            holistic = self.h.run_gate("judge_code", {"impl": impl})
+            self._log(res, f"[judge:code] {'GO' if holistic.passed else 'NO-GO'}")
+
+            if gate_ok and holistic.passed:
+                passed = True
+                break
+
+            # collect findings for the next round's implementer
+            feedback = []
+            if not gate_ok:
+                feedback += [str(f) for f in gate_findings]
+            if not holistic.passed:
+                feedback += [f.message for f in holistic.findings] or ["holistic judge NO-GO"]
+            self._log(res, f"[dev-loop] round {rnd} NO-GO ({len(feedback)} findings) -> retry" if rnd < MAX_REVIEW_ROUNDS else f"[dev-loop] round {rnd} NO-GO (final round)")
+
         state.advance(Phase.REVIEW); self.store.save(state)
 
-        # --- holistic review (independent judge) ---
-        holistic = self.h.run_gate("judge_code", {"impl": impl})
-        self._log(res, f"[judge:code] {'GO' if holistic.passed else 'NO-GO'}")
-        if not holistic.passed:
-            res.blocked = True
-            res.block_reason = "holistic judge NO-GO"
-            return self._finish(res, state)
+        if not passed:
+            # B: judge still failing after MAX_REVIEW_ROUNDS -> involve a human
+            # rather than dead-ending. Hard-sensitive policy not required here;
+            # this is an escalation gate, the approver decides go/no-go.
+            self._log(res, f"[dev-loop] exhausted {MAX_REVIEW_ROUNDS} rounds, still NO-GO -> escalate to human")
+            rec = self.h.request_approval(Checkpoint(
+                name="review_escalation",
+                summary=f"Dev loop failed the judge after {MAX_REVIEW_ROUNDS} rounds. "
+                        f"Last findings:\n" + "\n".join(feedback[:10]),
+                required_policy="codeowner"))
+            self._log(res, f"[checkpoint:review_escalation] {rec.state.value} by {rec.approver or '?'}")
+            if rec.state not in (ApprovalState.APPROVED, ApprovalState.EDITED):
+                res.blocked = True
+                res.block_reason = f"review escalation: {rec.state.value} after {MAX_REVIEW_ROUNDS} rounds"
+                return self._finish(res, state)
+
         state.advance(Phase.PR); self.store.save(state)
 
         # --- pre-merge re-risk + checkpoint ---

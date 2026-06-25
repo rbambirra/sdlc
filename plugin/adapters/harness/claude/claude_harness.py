@@ -22,13 +22,7 @@ import tempfile
 
 from core.capabilities import Task
 from adapters.harness.cli_base import CliHarnessBase
-from adapters.harness.roles import is_builder, render_context
-
-# Turn budgets. Analytic roles read+answer; builders iterate (write tests, code,
-# run them). Tunable per deployment; these are sane defaults proven by the
-# fake_scenario run (analytic done in a few turns; implementer needs many).
-ANALYTIC_MAX_TURNS = 6
-BUILDER_MAX_TURNS = 40
+from adapters.harness.roles import is_builder, render_context, turn_budget
 
 
 class ClaudeHarness(CliHarnessBase):
@@ -52,19 +46,19 @@ class ClaudeHarness(CliHarnessBase):
 
     def _build_argv(self, task: Task) -> list[str]:
         prompt = self._render_prompt(task)
+        turns = str(turn_budget(task.role))
         if is_builder(task.role):
-            # Real execution: write into the isolated worktree with a generous
-            # turn budget. Use acceptEdits + an explicit tool allowlist instead
-            # of --dangerously-skip-permissions, because that flag is refused
-            # when running as root (common in containers) and would block on a
-            # permission prompt otherwise in headless mode.
+            # Real execution: write into the isolated worktree. Use acceptEdits +
+            # an explicit tool allowlist instead of --dangerously-skip-permissions,
+            # because that flag is refused when running as root (common in
+            # containers) and would block on a permission prompt otherwise.
             return [
                 "claude", "-p", prompt,
-                "--max-turns", str(BUILDER_MAX_TURNS),
+                "--max-turns", turns,
                 "--permission-mode", "acceptEdits",
                 "--allowedTools", "Write", "Edit", "Bash", "Read",
             ]
-        return ["claude", "-p", prompt, "--max-turns", str(ANALYTIC_MAX_TURNS)]
+        return ["claude", "-p", prompt, "--max-turns", turns]
 
     @staticmethod
     def _render_prompt(task: Task) -> str:

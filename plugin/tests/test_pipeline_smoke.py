@@ -57,17 +57,53 @@ def test_plan_judge_nogo_blocks(tmp_path):
     assert "plan judge NO-GO" in res.block_reason
 
 
-def test_dod_gate_failure_blocks(tmp_path):
+def test_dod_gate_failure_retries_then_escalates_and_can_proceed(tmp_path):
+    """A: a persistent gate failure is retried up to MAX_REVIEW_ROUNDS.
+    B: if it still fails after the last round, a human is involved (here the
+    mock approver APPROVES) and the pipeline proceeds rather than dead-ending."""
     from core.capabilities import GateResult, Finding
+    from core.pipeline import MAX_REVIEW_ROUNDS
+
+    calls = {"held_out_tests": 0}
+
+    def gate_fn(name, inputs):
+        if name == "held_out_tests":
+            calls["held_out_tests"] += 1
+            return GateResult(passed=False, findings=[Finding("block", "held-out failed")])
+        return GateResult(passed=True)
+
+    res = _pipeline(tmp_path, gate_fn=gate_fn).run("DEMO-1")
+    # ran the dev loop the full number of rounds
+    assert calls["held_out_tests"] == MAX_REVIEW_ROUNDS
+    joined = "\n".join(res.log)
+    assert "escalate to human" in joined
+    assert "checkpoint:review_escalation" in joined
+    # mock approver approves -> proceeds to PR / DEV-DONE
+    assert res.ok
+    assert res.pr_ref.startswith("PR-")
+
+
+def test_review_escalation_rejected_blocks(tmp_path):
+    """B (reject branch): if the human rejects the escalation after the rounds
+    are exhausted, the pipeline blocks with a clear reason."""
+    from core.capabilities import (ApprovalRecord, ApprovalState, Checkpoint,
+                                    GateResult, Finding)
 
     def gate_fn(name, inputs):
         if name == "held_out_tests":
             return GateResult(passed=False, findings=[Finding("block", "held-out failed")])
         return GateResult(passed=True)
 
-    res = _pipeline(tmp_path, gate_fn=gate_fn).run("DEMO-1")
+    def approve_specs_reject_escalation(cp: Checkpoint) -> ApprovalRecord:
+        # approve normal checkpoints, reject only the escalation
+        state = (ApprovalState.REJECTED if cp.name == "review_escalation"
+                 else ApprovalState.APPROVED)
+        return ApprovalRecord(checkpoint=cp.name, state=state, approver="human")
+
+    res = _pipeline(tmp_path, gate_fn=gate_fn,
+                    approval_fn=approve_specs_reject_escalation).run("DEMO-1")
     assert not res.ok
-    assert "DoD gate failed" in res.block_reason
+    assert "review escalation: rejected" in res.block_reason
 
 
 def test_hard_sensitive_requires_approval_and_can_reject(tmp_path):
