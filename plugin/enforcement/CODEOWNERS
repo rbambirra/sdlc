@@ -1,0 +1,20 @@
+# CODEOWNERS (template) — Camada 3 do enforcement.
+# Classes hard-sensitive exigem owner HUMANO; aprovação de agente NÃO conta.
+# Um CODEOWNERS coverage audit (CI) falha se área sensível ficar sem owner.
+# O projeto preenche os times/usuários reais no setup.
+#
+# IMPORTANTE: este arquivo + branch protection + required checks vivem em
+# org/server policy protegida, fora do alcance da identidade do agente.
+
+# Enforcement config — só humanos admin
+/enforcement/                 @org/security-admins
+/.github/workflows/           @org/security-admins
+/CODEOWNERS                    @org/security-admins
+
+# Classes hard-sensitive
+# (ajuste os globs aos paths reais do projeto no setup)
+**/auth/**                     @org/auth-owners
+**/payment/**                  @org/payments-owners
+**/migrations/**               @org/data-owners
+**/*secret*                    @org/security-admins
+/infra/                        @org/platform-owners

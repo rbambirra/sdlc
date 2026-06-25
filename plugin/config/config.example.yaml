@@ -1,0 +1,44 @@
+# config.example.yaml — configuração de projeto do SDLC autônomo.
+# Copie para config.yaml e especialize. Versionado; mudança exige aprovação humana.
+
+project:
+  name: "my-project"
+  harness: "claude"          # claude | codex | hermes  (adapter Tier-1)
+
+board:
+  provider: "jira"           # jira | ado | mock
+  # auth via env: JIRA_BASE_URL / JIRA_EMAIL / JIRA_API_TOKEN (ou ADO equivalentes)
+  project_key: "PROJ"
+  ready_state: "Ready"
+  active_state: "Active"
+  review_state: "Review"
+  done_state: "Done"
+
+vcs:
+  provider: "github"         # github | ado | mock
+  repo: "owner/name"
+  base_branch: "main"
+  # auth via env: GITHUB_TOKEN (least-privilege: contents + PR; NUNCA admin)
+
+risk:
+  threshold: "medium"        # low | medium | high  (acima disto ativa ✋ humano)
+  # classes hard-sensitive são sempre não-overridáveis (auth/payment/migration/secrets/infra)
+  matrix_file: "risk-matrix.yaml"
+
+dod_gates:                   # ligue incrementalmente; held-out + secret-scan são o piso
+  held_out_tests: true
+  mutation: false
+  typecheck_lint: true
+  contract: true
+  deps_scan: true
+  secret_scan: true
+  sast: true
+  e2e: true
+
+deploy:
+  enabled: false             # opt-in; quando true, ativa a trilha DevOps de deploy
+  health_check_url: ""
+  rollback: true
+
+mode:
+  interactive_approvals: true   # dev mode síncrono; false = serviço (aprovação durável)

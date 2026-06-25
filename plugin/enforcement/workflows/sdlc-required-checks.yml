@@ -1,0 +1,35 @@
+# CI required checks (template) — Camada 2 do enforcement (server-side; o agente NÃO pula).
+# Este workflow deve ser um REQUIRED CHECK na branch protegida e vir de uma
+# reusable workflow centralizada na org (fora do repo, imutável pelo agente).
+name: sdlc-required-checks
+on:
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  required:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+
+      - name: Re-risking semântico (independente do agente)
+        run: python3 enforcement/rerisk_check.py --base "origin/${{ github.base_ref }}"
+
+      - name: Secret scanning
+        run: |
+          command -v gitleaks >/dev/null && gitleaks detect --redact || echo "configure gitleaks"
+
+      - name: PII scan
+        run: bash plugin/enforcement/scripts/pii_scan.sh --diff "origin/${{ github.base_ref }}"
+
+      - name: SAST
+        run: echo "wire your SAST (CodeQL/Sonar/Semgrep) here — required for security-relevant changes"
+
+      - name: SCA / dependency scan (CVE + slopsquatting)
+        run: echo "wire SCA (Trivy/Snyk) + lockfile/registry validation here"
+
+      - name: Held-out tests (isolated; NOT authored by the implementer)
+        run: echo "invoke the protected held-out test suite from its protected location"
+
+      # type-check/lint/build/contract/E2E added per stack at setup.

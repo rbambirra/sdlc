@@ -1,0 +1,27 @@
+# Pre-commit config (template) — Camada 1 do enforcement (local; ergonomia).
+# A trava REAL é server-side (CI required checks). Nunca use --no-verify.
+# O projeto especializa por stack no setup. Ver ../../docs/model/enforcement-controls-checklist.md
+repos:
+  - repo: local
+    hooks:
+      - id: secret-scan
+        name: secret scanning (detect-secrets/gitleaks)
+        entry: bash -c 'command -v gitleaks >/dev/null && gitleaks protect --staged || echo "install gitleaks"'
+        language: system
+        pass_filenames: false
+      - id: pii-detector
+        name: PII detector (CPF/email/cartão)
+        entry: bash scripts/pii_scan.sh
+        language: system
+        pass_filenames: true
+      - id: conventional-commit
+        name: conventional commit + ADO/Jira id scope
+        entry: bash scripts/commit_msg_check.sh
+        language: system
+        stages: [commit-msg]
+      - id: branch-name
+        name: branch naming <prefix>/<id>
+        entry: bash scripts/branch_name_check.sh
+        language: system
+        pass_filenames: false
+  # stack-specific lint/type-check/test hooks added by the project at setup.
