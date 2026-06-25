@@ -108,6 +108,29 @@ class FakeVcs(Vcs):
 
 
 # --------------------------------------------------------------------------
+def _show_worktrees(harness, label: str) -> None:
+    """If the harness materialized code in builder worktrees, show what it
+    produced so the two harnesses can be compared on REAL output."""
+    import os
+    wts = getattr(harness, "_worktrees", {})
+    if not wts:
+        return
+    print(f"\n--- {label}: code produced (builder worktrees) ---")
+    for wt in wts.values():
+        if not (wt and os.path.isdir(wt)):
+            continue
+        files = [f for f in sorted(os.listdir(wt))
+                 if not f.startswith(".") and f != "__pycache__"]
+        print(f"  worktree: {wt}")
+        for f in files:
+            p = os.path.join(wt, f)
+            try:
+                n = sum(1 for _ in open(p, encoding="utf-8", errors="replace"))
+                print(f"    - {f} ({n} lines)")
+            except OSError:
+                print(f"    - {f}")
+
+
 def run_with(harness, label: str) -> bool:
     print(f"\n{'='*70}\n  FAKE SCENARIO — real harness: {label}\n{'='*70}")
     board = FakeBoard()
@@ -128,6 +151,7 @@ def run_with(harness, label: str) -> bool:
     print("\n--- pipeline log ---")
     for line in res.log:
         print("  " + line)
+    _show_worktrees(harness, label)
     print("\n--- board log ---")
     for line in board.log:
         print("  " + line)

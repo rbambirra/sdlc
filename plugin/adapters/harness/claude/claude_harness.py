@@ -22,9 +22,7 @@ import tempfile
 
 from core.capabilities import Task
 from adapters.harness.cli_base import CliHarnessBase
-
-# Roles that materialize code on disk vs. roles that only return an artifact.
-BUILDER_ROLES = {"implementer"}
+from adapters.harness.roles import is_builder, render_context
 
 # Turn budgets. Analytic roles read+answer; builders iterate (write tests, code,
 # run them). Tunable per deployment; these are sane defaults proven by the
@@ -43,11 +41,8 @@ class ClaudeHarness(CliHarnessBase):
         # inspect what was produced. Keyed by task id().
         self._worktrees: dict[int, str] = {}
 
-    def _is_builder(self, task: Task) -> bool:
-        return task.role in BUILDER_ROLES
-
     def _build_cwd(self, task: Task) -> str | None:
-        if not self._is_builder(task):
+        if not is_builder(task.role):
             return None
         # Isolated worktree per builder task. mkdtemp survives the run so the
         # produced files can be inspected/collected by the pipeline afterward.
@@ -57,7 +52,7 @@ class ClaudeHarness(CliHarnessBase):
 
     def _build_argv(self, task: Task) -> list[str]:
         prompt = self._render_prompt(task)
-        if self._is_builder(task):
+        if is_builder(task.role):
             # Real execution: write into the isolated worktree with a generous
             # turn budget. Use acceptEdits + an explicit tool allowlist instead
             # of --dangerously-skip-permissions, because that flag is refused
@@ -73,13 +68,12 @@ class ClaudeHarness(CliHarnessBase):
 
     @staticmethod
     def _render_prompt(task: Task) -> str:
-        ctx = "\n".join(f"- {k}: {str(v)[:500]}" for k, v in task.context.items())
-        builder = task.role in BUILDER_ROLES
+        ctx = render_context(task.context, task.role)
         tail = (
             "Write the code and tests into the current working directory "
             "(an empty isolated worktree). When done, respond with a short "
             "summary of the files you created and the tests you ran."
-            if builder else
+            if is_builder(task.role) else
             "Respond with only your work output."
         )
         return (f"You are a {task.role} subagent in an autonomous SDLC pipeline.\n"
