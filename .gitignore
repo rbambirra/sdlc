@@ -1,0 +1,12 @@
+# Python bytecode / caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Pipeline run state written by scenarios/tests
+/tmp/sdlc-*/
+
+# OS / editor
+.DS_Store
+*.swp
+*~

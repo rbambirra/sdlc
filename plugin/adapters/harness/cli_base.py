@@ -33,11 +33,12 @@ class _CliJob(JobHandle):
     """Runs argv in a background thread; non-blocking handle."""
 
     def __init__(self, argv: list[str], parse: Callable[[str], str],
-                 timeout_s: float | None):
+                 timeout_s: float | None, cwd: str | None = None):
         self.job_id = f"cli-{id(self)}"
         self._argv = argv
         self._parse = parse
         self._timeout = timeout_s
+        self._cwd = cwd
         self._proc: subprocess.Popen | None = None
         self._status = JobStatus.PENDING
         self._result: JobResult | None = None
@@ -51,7 +52,7 @@ class _CliJob(JobHandle):
         try:
             self._proc = subprocess.Popen(
                 self._argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True,
+                text=True, cwd=self._cwd,
             )
             try:
                 out, _ = self._proc.communicate(timeout=self._timeout)
@@ -145,6 +146,11 @@ class CliHarnessBase:
     def _build_argv(self, task: Task) -> list[str]:
         raise NotImplementedError
 
+    def _build_cwd(self, task: Task) -> str | None:
+        """Working directory for the subprocess. Default None (inherit). A
+        harness that runs the agent in an isolated worktree overrides this."""
+        return None
+
     def _parse_output(self, raw: str) -> str:
         return raw.strip()
 
@@ -155,9 +161,11 @@ class CliHarnessBase:
         # exception that breaks the orchestrator.
         try:
             argv = self._build_argv(task)
+            cwd = self._build_cwd(task)
         except Exception as exc:
             return _FailedJob(str(exc))
-        return _CliJob(argv, self._parse_output, task.timeout_s or self.default_timeout_s)
+        return _CliJob(argv, self._parse_output,
+                       task.timeout_s or self.default_timeout_s, cwd=cwd)
 
     def run_gate(self, name: str, inputs: dict) -> GateResult:
         return self._gate_fn(name, inputs)
